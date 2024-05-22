@@ -1,0 +1,6 @@
+#!/bin/sh
+
+SCRIPT_PATH=$(dirname $(readlink -f "$0"))
+
+/bin/sh "$SCRIPT_PATH/convert_avi.sh"
+/bin/sh "$SCRIPT_PATH/convert_qoocam.sh"

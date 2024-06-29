@@ -12,34 +12,87 @@ import ArgumentParser
 
 let mpoheader = Data([0xFF, 0xD8, 0xFF, 0xE1] as [UInt8])
 
+extension Collection {
+	func unfoldSubSequences(limitedTo maxLength: Int) -> UnfoldSequence<SubSequence,Index> {
+		sequence(state: startIndex) { start in
+			guard start < self.endIndex else { return nil }
+			let end = self.index(start, offsetBy: maxLength, limitedBy: self.endIndex) ?? self.endIndex
+			defer { start = end }
+			return self[start..<end]
+		}
+	}
+}
+
 struct SpatialPhotoTool: ParsableCommand {
 	@Argument var files: [String] = []
 	@Option(name: .customLong("hfov"), help: "Horizontal field-of-view (in degrees).")
 	var hFOV: Double?
-	@Option(name: .customLong("disparityAdjustment"), help: "Disparity adjustment, -1.0 to 1.0.")
+	@Option(name: [.short, .customLong("disparityAdjustment")], help: "Disparity adjustment, -1.0 to 1.0.")
 	var disparityAdjustment: Double?
-	@Option(name: .customLong("baseline"), help: "Baseline (IPD) of lenses in mm.")
+	@Option(name: [.short, .customLong("baseline")], help: "Baseline (IPD) of lenses in mm.")
 	var baseline: Double?
+	@Option(name: [.short, .customLong("sensorWidth")], help: "Width of the camera sensor/film (in mm, i.e. 36mm for a full frame camera or 23.5 for a Sony APS-C camera).")
+	var sensorWidth: Double?
+	@Option(name: [.short, .customLong("focalLength")], help: "Focal length of the lens (in mm).")
+	var focalLength: Int?
+	@Flag(name: [.short, .customLong("pairs")], help: "Convert images in pairs: <left1> <right1> .. <leftN> <rightN>.")
+	var pairs = false
+
 
 	static let configuration = CommandConfiguration(commandName: "spatialPhotoTool")
 
-	func run() throws {
-		for file in files {
-			guard FileManager.default.fileExists(atPath: file) else {
-				print("Can't open \(file)")
-				continue
-			}
+	mutating func run() throws {
+		if hFOV != nil && (sensorWidth != nil || focalLength != nil) {
+			print("WARNING: using hFOV, not focalLength")
+		}
+		if (sensorWidth != nil && focalLength == nil) || (sensorWidth == nil && focalLength != nil) {
+			print("WARNING: sensorWidth and focalLength must both be specified, ignoring")
+		}
+		if hFOV == nil, let sensorWidth = sensorWidth, let focalLength = focalLength {
+			hFOV = 2 * 180 / Double.pi * atan(sensorWidth / (2 * Double(focalLength)))
+			print("Calculated hFOV = \(hFOV ?? 0)")
+		}
 
-			let url = URL(fileURLWithPath: file)
-			switch url.pathExtension.lowercased() {
-			case "mpo":
-				print("Converting multi-picture-object image: \(url.lastPathComponent)")
-				convertMPO(url)
-			case "jpg", "jpeg", "png", "heic":
-				print("Converting side-by-side image: \(url.lastPathComponent)")
-				convertSBS(url)
-			default:
-				print("Unknown file specified: \(url.lastPathComponent)")
+		if pairs {
+			if files.count % 2 != 0 {
+				print("files are not pairs of images!")
+				return
+			}
+			for filePair in files.unfoldSubSequences(limitedTo: 2) {
+				guard let left = filePair.first else { continue }
+				guard let right = filePair.last else { continue }
+				guard FileManager.default.fileExists(atPath: left) else {
+					print("Can't open \(left)")
+					continue
+				}
+				guard FileManager.default.fileExists(atPath: right) else {
+					print("Can't open \(right)")
+					continue
+				}
+
+				let leftUrl = URL(fileURLWithPath: left)
+				let rightUrl = URL(fileURLWithPath: right)
+				print("Converting image pair: left: \(leftUrl.lastPathComponent) right: \(rightUrl.lastPathComponent)")
+				convertPair(leftUrl, rightUrl)
+			}
+		} else {
+			for file in files {
+				guard FileManager.default.fileExists(atPath: file) else {
+					print("Can't open \(file)")
+					continue
+				}
+
+				let url = URL(fileURLWithPath: file)
+				switch url.pathExtension.lowercased() {
+				case "mpo":
+					print("Converting multi-picture-object image: \(url.lastPathComponent)")
+					convertMPO(url)
+				case "jpg", "jpeg", "png", "heic":
+					print("Converting side-by-side image: \(url.lastPathComponent)")
+					convertSBS(url)
+				default:
+					print("Unknown file specified: \(url.lastPathComponent)")
+				}
 			}
 		}
 	}
@@ -115,7 +168,7 @@ struct SpatialPhotoTool: ParsableCommand {
 			return
 		}
 
-		createSpatialImage(URL(fileURLWithPath: url.deletingPathExtension().path(percentEncoded: false) + ".heic"), left: images[0], right: images[1], metadata: properties, hFOV: hFOV ?? 48.0, baseline: baseline ?? 75.0)
+		createSpatialImage(URL(fileURLWithPath: url.deletingPathExtension().path(percentEncoded: false) + ".heic"), left: images[0], right: images[1], leftMetadata: properties, rightMetadata: properties, hFOV: hFOV ?? 48.0, baseline: baseline ?? 75.0)
 	}
 
 	private func convertSBS(_ url: URL) {
@@ -176,7 +229,50 @@ struct SpatialPhotoTool: ParsableCommand {
 			}
 		}
 
-		createSpatialImage(URL(fileURLWithPath: url.deletingPathExtension().path(percentEncoded: false) + ".heic"), left: left, right: right, metadata: properties as CFDictionary, hFOV: hFOV ?? 66.0, baseline: baseline ?? 65.0)
+		createSpatialImage(URL(fileURLWithPath: url.deletingPathExtension().path(percentEncoded: false) + ".heic"), left: left, right: right, leftMetadata: properties as CFDictionary, rightMetadata: properties as CFDictionary, hFOV: hFOV ?? 66.0, baseline: baseline ?? 65.0)
+	}
+
+	func convertPair(_ left: URL, _ right: URL) {
+		guard let leftImageSource = CGImageSourceCreateWithURL(left as CFURL, nil) else {
+			print("Can't open image \(left.lastPathComponent)")
+			return
+		}
+		guard let rightImageSource = CGImageSourceCreateWithURL(right as CFURL, nil) else {
+			print("Can't open image \(right.lastPathComponent)")
+			return
+		}
+
+		let leftImageCount = CGImageSourceGetCount(leftImageSource)
+		guard leftImageCount == 1 else {
+			print("Unexpected number of images in \(left.lastPathComponent): \(leftImageCount)")
+			return
+		}
+		let rightImageCount = CGImageSourceGetCount(rightImageSource)
+		guard rightImageCount == 1 else {
+			print("Unexpected number of images in \(right.lastPathComponent): \(rightImageCount)")
+			return
+		}
+
+		guard let leftImage = CGImageSourceCreateImageAtIndex(leftImageSource, 0, nil) else {
+			print("Can't load image \(left.lastPathComponent)")
+			return
+		}
+		guard let rightImage = CGImageSourceCreateImageAtIndex(rightImageSource, 0, nil) else {
+			print("Can't load image \(right.lastPathComponent)")
+			return
+		}
+
+		// load EXIF data to copy to destination images
+		guard let leftProperties = CGImageSourceCopyPropertiesAtIndex(leftImageSource, 0, nil) else {
+			print("Unable to load metadata for \(left.lastPathComponent)")
+			return
+		}
+		guard let rightProperties = CGImageSourceCopyPropertiesAtIndex(rightImageSource, 0, nil) else {
+			print("Unable to load metadata for \(right.lastPathComponent)")
+			return
+		}
+
+		createSpatialImage(URL(fileURLWithPath: left.deletingPathExtension().path(percentEncoded: false) + ".heic"), left: leftImage, right: rightImage, leftMetadata: leftProperties, rightMetadata: rightProperties, hFOV: hFOV ?? 54.12, baseline: baseline ?? 65.0)
 	}
 
 	func propertiesDictionary(isLeft: Bool, disparityAdjustment: Double?, position: [Double], intrinsics: [CGFloat], metadata: CFDictionary) -> [CFString: Any] {
@@ -213,7 +309,7 @@ struct SpatialPhotoTool: ParsableCommand {
 		return properties as [CFString: Any]
 	}
 
-	func createSpatialImage(_ url: URL, left: CGImage, right: CGImage, metadata: CFDictionary, hFOV: Double, baseline: Double) {
+	func createSpatialImage(_ url: URL, left: CGImage, right: CGImage, leftMetadata: CFDictionary, rightMetadata: CFDictionary, hFOV: Double, baseline: Double) {
 		guard left.width == right.width && left.height == right.height else {
 			print("Image sizes are mismatched: \(url.lastPathComponent)")
 			return
@@ -236,9 +332,9 @@ struct SpatialPhotoTool: ParsableCommand {
 			0, 0, 1
 		]
 
-		CGImageDestinationAddImage(destination, left, propertiesDictionary(isLeft: true, disparityAdjustment: disparityAdjustment, position: [0, 0, 0], intrinsics: cameraIntrinsics, metadata: metadata) as CFDictionary)
+		CGImageDestinationAddImage(destination, left, propertiesDictionary(isLeft: true, disparityAdjustment: disparityAdjustment, position: [0, 0, 0], intrinsics: cameraIntrinsics, metadata: leftMetadata) as CFDictionary)
 		let baselineInMeters = baseline / 1000.0
-		CGImageDestinationAddImage(destination, right, propertiesDictionary(isLeft: false, disparityAdjustment: disparityAdjustment, position: [baselineInMeters, 0, 0], intrinsics: cameraIntrinsics, metadata: metadata) as CFDictionary)
+		CGImageDestinationAddImage(destination, right, propertiesDictionary(isLeft: false, disparityAdjustment: disparityAdjustment, position: [baselineInMeters, 0, 0], intrinsics: cameraIntrinsics, metadata: rightMetadata) as CFDictionary)
 		CGImageDestinationFinalize(destination)
 	}
 }

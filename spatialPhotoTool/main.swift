@@ -282,7 +282,6 @@ struct SpatialPhotoTool: ParsableCommand {
 			0, 0, 1
 		]
 
-		let positionMatrix: [CGFloat] = [ 0, 0, 0 ]
 		let encodedDisparityAdjustment = Int((disparityAdjustment ?? 0) * 1e4)
 
 		var properties = (metadata as? Dictionary<String, Any>) ?? [String: Any]()
@@ -300,7 +299,7 @@ struct SpatialPhotoTool: ParsableCommand {
 			],
 			kIIOMetadata_CameraExtrinsicsKey: [
 				kIIOCameraExtrinsics_CoordinateSystemID: 0 as CGFloat,
-				kIIOCameraExtrinsics_Position: positionMatrix as CFArray,
+				kIIOCameraExtrinsics_Position: position as CFArray,
 				kIIOCameraExtrinsics_Rotation: rotationMatrix as CFArray,
 			]
 		]

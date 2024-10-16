@@ -202,6 +202,18 @@ struct SpatialPhotoTool: ParsableCommand {
 			return
 		}
 
+		var defaultBaseline = 65.0
+		var defaultHFOV = 66.0
+
+		// check for Acer ASEC-1 metadata
+		if let tiffProperties = properties[kCGImagePropertyTIFFDictionary] as? Dictionary<CFString, Any> {
+			if tiffProperties[kCGImagePropertyTIFFMake] as? String == "Acer Inc." && tiffProperties[kCGImagePropertyTIFFModel] as? String == "ASEC-1" {
+				print("Adding Acer SpatialLabs Eyes stereo metadata...")
+				defaultBaseline = 63.0
+				defaultHFOV = 80.0
+			}
+		}
+
 		// the EXIF data for QooCam images is missing the Camera Make/Model, so add it
 		if let userData = properties[kCGImagePropertyExifDictionary]?[kCGImagePropertyExifUserComment] as? String {
 			if userData.hasPrefix("QooCam+EGO") {
@@ -229,7 +241,7 @@ struct SpatialPhotoTool: ParsableCommand {
 			}
 		}
 
-		createSpatialImage(URL(fileURLWithPath: url.deletingPathExtension().path(percentEncoded: false) + ".heic"), left: left, right: right, leftMetadata: properties as CFDictionary, rightMetadata: properties as CFDictionary, hFOV: hFOV ?? 66.0, baseline: baseline ?? 65.0)
+		createSpatialImage(URL(fileURLWithPath: url.deletingPathExtension().path(percentEncoded: false) + ".heic"), left: left, right: right, leftMetadata: properties as CFDictionary, rightMetadata: properties as CFDictionary, hFOV: hFOV ?? defaultHFOV, baseline: baseline ?? defaultBaseline)
 	}
 
 	func convertPair(_ left: URL, _ right: URL) {

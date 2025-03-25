@@ -87,7 +87,7 @@ struct SpatialPhotoTool: ParsableCommand {
 				case "mpo":
 					print("Converting multi-picture-object image: \(url.lastPathComponent)")
 					convertMPO(url)
-				case "jpg", "jpeg", "png", "heic":
+				case "jpg", "jpeg", "png", "tif", "tiff", "heic":
 					print("Converting side-by-side image: \(url.lastPathComponent)")
 					convertSBS(url)
 				default:
